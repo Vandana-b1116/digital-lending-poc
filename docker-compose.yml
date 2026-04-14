@@ -1,0 +1,92 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: lending-postgres
+    environment:
+      POSTGRES_DB: digital_lending
+      POSTGRES_USER: lending_user
+      POSTGRES_PASSWORD: lending_pass
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lending_user -d digital_lending"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  application-service:
+    build: ./application-service
+    container_name: application-service
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/digital_lending
+      SPRING_DATASOURCE_USERNAME: lending_user
+      SPRING_DATASOURCE_PASSWORD: lending_pass
+      DOCUMENT_SERVICE_URL: http://document-service:8082
+      LLM_SERVICE_URL: http://llm-extraction-service:8083
+      UNDERWRITING_SERVICE_URL: http://underwriting-service:8084
+      JWT_SECRET: ${JWT_SECRET:-digital-lending-jwt-secret-key-32chars}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  document-service:
+    build: ./document-service
+    container_name: document-service
+    ports:
+      - "8082:8082"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/digital_lending
+      SPRING_DATASOURCE_USERNAME: lending_user
+      SPRING_DATASOURCE_PASSWORD: lending_pass
+      APPLICATION_SERVICE_URL: http://application-service:8081
+      LLM_SERVICE_URL: http://llm-extraction-service:8083
+    volumes:
+      - document_storage:/tmp/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  llm-extraction-service:
+    build: ./llm-extraction-service
+    container_name: llm-extraction-service
+    ports:
+      - "8083:8083"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/digital_lending
+      SPRING_DATASOURCE_USERNAME: lending_user
+      SPRING_DATASOURCE_PASSWORD: lending_pass
+      APPLICATION_SERVICE_URL: http://application-service:8081
+      DOCUMENT_SERVICE_URL: http://document-service:8082
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-your-claude-api-key-here}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  underwriting-service:
+    build: ./underwriting-service
+    container_name: underwriting-service
+    ports:
+      - "8084:8084"
+    depends_on:
+      - postgres
+
+  frontend:
+    build: ./frontend
+    container_name: lending-frontend
+    ports:
+      - "4200:80"
+    depends_on:
+      - application-service
+      - document-service
+      - llm-extraction-service
+
+volumes:
+  postgres_data:
+  document_storage:
