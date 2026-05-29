@@ -4,10 +4,14 @@ import com.digitallending.document.dto.DocumentResponse;
 import com.digitallending.document.entity.Document;
 import com.digitallending.document.model.ExtractionStatus;
 import com.digitallending.document.repository.DocumentRepository;
+import com.digitallending.document.service.ExtractionTriggerService;
 import com.digitallending.document.service.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -24,6 +28,7 @@ public class DocumentController {
 
     private final DocumentRepository documentRepository;
     private final StorageService storageService;
+    private final ExtractionTriggerService extractionTriggerService;
 
     @PostMapping("/upload")
     public ResponseEntity<DocumentResponse> upload(
@@ -44,6 +49,9 @@ public class DocumentController {
 
             Document saved = documentRepository.save(doc);
             log.info("Uploaded document {} for application {}", saved.getId(), applicationId);
+
+            extractionTriggerService.triggerExtraction(saved.getId(), applicationId);
+
             return ResponseEntity.status(HttpStatus.CREATED).body(toResponse(saved));
         } catch (Exception e) {
             log.error("Upload failed for application {}", applicationId, e);
@@ -79,6 +87,26 @@ public class DocumentController {
             return ResponseEntity.ok(toResponse(documentRepository.save(doc)));
         } catch (NoSuchElementException e) {
             return ResponseEntity.notFound().build();
+        }
+    }
+
+    @GetMapping("/{id}/content")
+    public ResponseEntity<Resource> getContent(@PathVariable Long id) {
+        try {
+            Document doc = documentRepository.findById(id)
+                    .orElseThrow(() -> new NoSuchElementException("Document not found: " + id));
+            Resource resource = storageService.retrieve(doc.getStoragePath());
+            return ResponseEntity.ok()
+                    .contentType(MediaType.parseMediaType(
+                            doc.getMimeType() != null ? doc.getMimeType() : "application/octet-stream"))
+                    .header(HttpHeaders.CONTENT_DISPOSITION,
+                            "inline; filename=\"" + doc.getOriginalFilename() + "\"")
+                    .body(resource);
+        } catch (NoSuchElementException e) {
+            return ResponseEntity.notFound().build();
+        } catch (Exception e) {
+            log.error("Failed to retrieve content for document {}", id, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
     }
 
